@@ -1,0 +1,30 @@
+# Tool artifacts
+.playwright-mcp/
+*.log
+tool-results/
+
+# Internal working docs — not for public v0.1
+notes.md
+tools-plan.md
+chat.txt
+
+# Copyrighted third-party content — fair-use quotes only in writeups
+sed314-transcript.md
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.vscode/
+.idea/
+
+# Node / Python artifacts (for future tool builds)
+node_modules/
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+dist/
+build/
