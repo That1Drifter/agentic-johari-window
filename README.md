@@ -1,57 +1,75 @@
-# The Agentic Johari Window
+# The Context Window Is the Johari Window
 
-**A framework for reasoning about what your AI agents know, hide, and can't see.**
+**A framework for reasoning about what's in your LLM's context window, what's missing, and what's in the way.**
 
-The 1955 Luft–Ingham Johari Window mapped self-knowledge against others' knowledge across four quadrants. This project adapts it to AI agents: **agent internal state** against **operator / system visibility**.
+Every LLM system in production has the same two complaints: the context gets polluted with stale noise, and the model doesn't have what it needs. These are not independent problems; the first one causes the second. Map **context relevance** against **context presence** and you get a 2×2:
 
 ```
-                OPERATOR
-            Visible      Not Visible
-          ┌───────────┬───────────┐
-  Agent   │   OPEN    │  HIDDEN   │
- surfaces │ (aligned) │ (opaque)  │
-          ├───────────┼───────────┤
-  Agent   │   BLIND   │  UNKNOWN  │
- doesn't  │   SPOT    │(emergent) │
-          │  (drift)  │           │
-          └───────────┴───────────┘
+                     CONTEXT RELEVANCE
+               Right context      Wrong/stale context
+            ┌─────────────────┬─────────────────┐
+  Present   │     SIGNAL      │     BLOAT       │
+  in window │   (effective)   │   (rot/noise)   │
+            ├─────────────────┼─────────────────┤
+  Absent    │     NEEDED      │     UNKNOWN     │
+  from      │   (retrievable) │  (undiscovered) │
+  window    │                 │                 │
+            └─────────────────┴─────────────────┘
 ```
 
-Three expansion forces grow the Open quadrant:
+Three forces grow the Signal quadrant:
 
-- **Feedback** (evals, LLM-as-judge, anomaly detection) shrinks **Blind Spot**
-- **Disclosure** (structured CoT, reasoning traces, context provenance) shrinks **Hidden**
-- **Exploration** (red-teaming, chaos engineering, adversarial testing) shrinks **Unknown**
+- **Pruning** shrinks **Bloat**: context hygiene, selective compression, staleness detection
+- **Retrieval** shrinks **Needed**: RAG, structured memory, MCP resources
+- **Exploration** shrinks **Unknown**: proactive search, discovering what you don't know you're missing
 
-In multi-agent systems, every handoff creates new Hidden and Unknown zones. (Cemri et al. 2025 found 58% of multi-agent failures happen at or downstream of inter-agent handoffs.)
+The core claim is mechanical, not metaphorical: the window is finite and zero-sum, and bloat doesn't just waste tokens, it **displaces signal**. Chroma's 2025 context-rot study found every one of 18 frontier models degrades well before the context limit, driven partly by distractor interference. Every token of noise pushes a token of signal out of the window or into the attention dead zone. Bloat creates the Needed quadrant. That's why the framework's contrarian claim is that **what you take out matters more than what you put in.**
+
+Full argument: [`context-window-writeup.md`](./context-window-writeup.md).
 
 ## What's in this repo
 
+### The framework (v0.2)
+
 | File | What it is |
 |---|---|
-| [`agentic-johari-window.md`](./agentic-johari-window.md) | The full framework writeup — quadrants, forces, multi-agent compounding, practical application |
-| [`sample-writeup.md`](./sample-writeup.md) | A shorter blog-style version with the personal origin story |
-| [`research.md`](./research.md) | Literature review — ~40 sources from AI safety, interpretability, cognitive science, and multi-agent failure research. Covers where the framework is supported and where the literature complicates it |
-| [`agentic-johari-window.jsx`](./agentic-johari-window.jsx) | Interactive React diagnostic — a 16-question self-audit that scores agent systems across the four quadrants |
-| [`skills/johari-diagnostic/SKILL.md`](./skills/johari-diagnostic/SKILL.md) | First derived tool — a Claude Code skill that inspects a real agent repo and scores observability coverage from evidence (not a survey) |
+| [`context-window-writeup.md`](./context-window-writeup.md) | The main writeup: the 2×2, the displacement mechanism, the zero-sum tradeoff, multi-agent fragmentation, temporal decay |
+| [`research-context-window.md`](./research-context-window.md) | Literature review backing the v0.2 claims: context rot, lost-in-the-middle, token-budget reasoning, MAST handoff failures |
+
+### Derived tools
+
+| Tool | What it does |
+|---|---|
+| [`skills/context-health/`](./skills/context-health/SKILL.md) | Claude Code skill that audits the current conversation: categorizes each context block as Signal, Bloat, or Overhead, computes a Bloat Index, and recommends what to prune. Token counts are an approximation, not a measurement; where the host exposes real context accounting, prefer that |
+| [`mcps/context-balance/`](./mcps/context-balance/README.md) | MCP server that detects pruning-retrieval feedback loops: oscillation cycles, re-retrieval of pruned sources, quality drops correlated with prunes or retrievals. Ships with a unit-tested detection layer |
+| [`skills/johari-diagnostic/`](./skills/johari-diagnostic/SKILL.md) | v0.1 skill that inspects an agent repo and scores observability coverage from evidence |
+| [`agentic-johari-window.jsx`](./agentic-johari-window.jsx) | v0.1 interactive React diagnostic: a 16-question self-audit across the four quadrants |
+
+## Where this came from (v0.1)
+
+The project started as an adaptation of the 1955 Luft-Ingham Johari Window to AI agent observability: **agent internal state** mapped against **operator visibility**, giving Open, Hidden, Blind Spot, and Unknown quadrants with Feedback, Disclosure, and Exploration as the expansion forces. That framing still works for the abstract question of agent transparency, but the context window is where the quadrants actually live, so v0.2 reframed the whole thing mechanically.
+
+The v0.1 material is kept intact:
+
+| File | What it is |
+|---|---|
+| [`agentic-johari-window.md`](./agentic-johari-window.md) | The v0.1 framework writeup: quadrants, forces, multi-agent compounding |
+| [`sample-writeup.md`](./sample-writeup.md) | Shorter blog-style version with the personal origin story |
+| [`research.md`](./research.md) | v0.1 literature review, ~40 sources across AI safety, interpretability, cognitive science, and multi-agent failure research |
 
 ## Status
 
-**v0.1 — concept + writeup + research + first tool.** This is the conceptual foundation and the first derived tool. Three more tools are planned (see the framework doc for details):
-
-- `/disclosure-check` — CoT faithfulness tests (Turpin / Lanham / Chen-style) as a skill
-- `johari-boundary-auditor` — MCP server that instruments inter-agent handoffs as first-class objects
-- `near-miss-recorder` — experimental MCP for capturing considered-but-not-executed tool calls
+**v0.2: context-window reframe + two working tools.** The context-health skill and context-balance MCP server ship in this repo. Next up: a worked end-to-end example running context-balance against a real agent session, and adapters so agent frameworks can emit `log_*` events without hand-instrumentation.
 
 ## Origin
 
-Inspired by Destin Sandlin's *Smarter Every Day* episode 314 — [*What Everyone Sees... But I don't (The Johari Window)*](https://youtu.be/WtQ64nSbdY4) — which dropped 2026-04-11 and wouldn't leave me alone. If you're here because of that video: welcome, this is the agent version of what Destin and Daylan were talking about.
+Inspired by Destin Sandlin's *Smarter Every Day* episode 314, [*What Everyone Sees... But I don't (The Johari Window)*](https://youtu.be/WtQ64nSbdY4), which dropped 2026-04-11 and wouldn't leave me alone. If you're here because of that video: welcome, this is the agent version of what Destin and Daylan were talking about.
 
-Andy Clark's *The Experience Machine* and decades of predictive-processing cognitive science provide the structural argument for why these quadrants pre-exist AI — and why expecting LLMs to self-report faithfully via chain-of-thought is the same category error as expecting humans to have full introspective access. See [`research.md`](./research.md) §11 for that thread.
+Andy Clark's *The Experience Machine* and decades of predictive-processing cognitive science provide the structural argument for why these quadrants pre-exist AI, and why expecting LLMs to self-report faithfully via chain-of-thought is the same category error as expecting humans to have full introspective access. See [`research.md`](./research.md) §11 for that thread. Tor Nørretranders' *The User Illusion* supplies the v0.2 parallel: consciousness is a bandwidth bottleneck, a context window for the mind.
 
 ## Prior art check
 
-No prior work was found applying the Johari Window to AI agents or LLM observability. The closest precedent is [Adam Shostack's threat-modeling adaptation](https://shostack.org/blog/threat-modeling-through-the-johari-window/) for cybersecurity. No observability vendor (Langfuse, Arize Phoenix, LangSmith, W&B Weave, Braintrust, Galileo) uses Johari framing. If you've seen this applied elsewhere and I missed it, open an issue — I'd like to cite it.
+No prior work was found applying the Johari Window to AI agents or LLM context management. The closest precedent is [Adam Shostack's threat-modeling adaptation](https://shostack.org/blog/threat-modeling-through-the-johari-window/) for cybersecurity. No observability vendor (Langfuse, Arize Phoenix, LangSmith, W&B Weave, Braintrust, Galileo) uses Johari framing. If you've seen this applied elsewhere and I missed it, open an issue; I'd like to cite it.
 
 ## License
 
@@ -60,12 +78,12 @@ Code (React diagnostic, skills, MCP servers): [MIT](./LICENSE).
 
 ## Contributing
 
-Feedback, disclosure, and exploration all welcome.
+Pruning, retrieval, and exploration all welcome.
 
-- **Issues** — corrections to the framework, missing citations, prior art I should know about
-- **PRs** — tools, adapters for specific agent frameworks, additional quadrant examples
-- **Discussion** — if you've applied this to a real agent system, I'd love to hear how it landed
+- **Issues**: corrections to the framework, missing citations, prior art I should know about
+- **PRs**: tools, adapters for specific agent frameworks (LangGraph, CrewAI, AutoGen), additional quadrant examples
+- **Discussion**: if you've applied this to a real agent system, I'd love to hear how it landed
 
 ---
 
-*Roger Maxwell ("Drifter") — 2026-04-11.*
+*Roger Maxwell ("Drifter"). v0.1 2026-04-11, v0.2 2026-04-13.*

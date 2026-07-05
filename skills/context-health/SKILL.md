@@ -16,6 +16,16 @@ Analyzes the current conversation's context composition and reports what percent
 
 ## Procedure
 
+### 0. Prefer real context accounting when the host provides it
+
+Before estimating anything, check whether the host exposes actual context-window numbers (Claude Code's `/context` command, an API usage field, or similar). If real totals are available:
+
+- Use the real total token count instead of the word-count estimate in step 1
+- Use real per-category breakdowns (system prompt, tools, messages) for the Overhead split where provided
+- Still perform the per-block Signal/Bloat classification below; hosts report *how much* context there is, not *which of it is working for the model*. Scale the per-block estimates so they sum to the real total.
+
+Only fall back to the `word_count × 1.3` estimate when no real accounting exists. Label the report accordingly: "measured" vs "estimated".
+
 ### 1. Inventory the conversation
 
 Walk through the entire visible conversation history. For each distinct block, record:
