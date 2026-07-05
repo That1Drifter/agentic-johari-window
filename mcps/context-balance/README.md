@@ -37,8 +37,8 @@ The MCP server exposes three instrumentation tools and three query tools.
 
 ### Detection algorithms
 
-- **Oscillation detection** — tracks cumulative context size (retrievals minus pruning). If size cycles grow/shrink repeatedly with amplitude > 1000 tokens, flags oscillation.
-- **Re-retrieval detection** — if the same source is retrieved, pruned, then retrieved again, that's the strongest signal of the feedback loop. Reports wasted tokens.
+- **Oscillation detection** — tracks cumulative context size (retrievals minus pruning). A cycle is a full peak → trough → peak swing where both the drop and the rebound exceed 1000 tokens; a one-time prune-down is not counted.
+- **Re-retrieval detection** — if the same source is retrieved, pruned, then retrieved again (in that order), that's the strongest signal of the feedback loop. Wasted tokens count only the retrievals that happen after a prune; the first retrieval was legitimate.
 - **Quality correlation** — correlates quality drops with recent prunes (prune regret = lost signal) and recent retrievals (retrieval regret = added bloat).
 
 ## Installation
@@ -103,31 +103,63 @@ await mcp.call_tool("log_quality_signal", {
 report = await mcp.call_tool("get_balance_report")
 ```
 
-Example balance report:
+## Worked example
+
+[`examples/synthetic_session.py`](./examples/synthetic_session.py) replays a scripted 24-event session through the real storage and detection layers: a RAG agent over-retrieves, summarizes away the docs it still needs under token pressure, then re-retrieves them. Run it yourself:
+
+```bash
+cd mcps/context-balance
+PYTHONPATH=. python examples/synthetic_session.py
+```
+
+Actual output (not hand-written):
 
 ```json
 {
   "status": "oscillating",
-  "total_events": 47,
-  "total_retrievals": 22,
-  "total_prunes": 18,
-  "total_quality_signals": 7,
-  "net_context_tokens": 12400,
-  "cycles_detected": 4,
-  "avg_cycle_period": 8.3,
+  "session_id": "synthetic-loop-demo",
+  "total_events": 24,
+  "total_retrievals": 11,
+  "total_prunes": 5,
+  "total_quality_signals": 8,
+  "net_context_tokens": 18600,
+  "cycles_detected": 2,
+  "avg_cycle_period": 8.0,
   "re_retrievals": [
     {
-      "source": "knowledge_base/product_docs",
+      "source": "kb/product_docs",
       "times_retrieved": 3,
       "times_pruned": 2,
-      "total_wasted_tokens": 7200
+      "total_wasted_tokens": 5100,
+      "first_seen_seq": 1,
+      "last_seen_seq": 19
+    },
+    {
+      "source": "kb/pricing",
+      "times_retrieved": 2,
+      "times_pruned": 1,
+      "total_wasted_tokens": 1900,
+      "first_seen_seq": 2,
+      "last_seen_seq": 12
     }
   ],
   "prune_regret_events": 2,
-  "retrieval_regret_events": 5,
-  "recommendation": "Oscillating: 4 grow/shrink cycles detected. 'knowledge_base/product_docs' retrieved 3x and pruned 2x, wasting ~7200 tokens. System is in a prune-retrieve feedback loop. Pin critical context to prevent re-retrieval, or raise pruning staleness threshold."
+  "retrieval_regret_events": 2,
+  "recommendation": "Oscillating: 2 grow/shrink cycles detected. 'kb/product_docs' retrieved 3x and pruned 2x, wasting ~5100 tokens. System is in a prune-retrieve feedback loop. Pin critical context to prevent re-retrieval, or raise pruning staleness threshold."
 }
 ```
+
+The detector correctly separates the pathology from normal usage: `kb/product_docs` shows 5100 wasted tokens (the two post-prune re-retrievals, not the legitimate first one), while sources that were retrieved and pruned once without re-retrieval don't appear.
+
+## Tests
+
+```bash
+cd mcps/context-balance
+pip install -e ".[dev]"
+python -m pytest tests/ -q
+```
+
+Unit tests feed synthetic event streams to the detection algorithms: pathological patterns (retrieve-prune-retrieve loops, repeated oscillation) must fire, healthy patterns (monotonic growth, one-time cleanup prunes, retrieve-retrieve-prune ordering) must not.
 
 ## Data storage
 

@@ -40,40 +40,30 @@ def detect_oscillation(
     if len(size_deltas) < 4:
         return 0, None
 
-    # Find local peaks and troughs
-    peaks = []
-    troughs = []
+    # Find local extrema in sequence order (peaks and troughs alternate)
+    extrema: list[tuple[str, int, int]] = []  # (kind, sequence, size)
     for i in range(1, len(size_deltas) - 1):
         prev_size = size_deltas[i - 1][1]
         curr_size = size_deltas[i][1]
         next_size = size_deltas[i + 1][1]
         if curr_size > prev_size and curr_size > next_size:
-            peaks.append(size_deltas[i])
+            extrema.append(("peak", size_deltas[i][0], curr_size))
         elif curr_size < prev_size and curr_size < next_size:
-            troughs.append(size_deltas[i])
+            extrema.append(("trough", size_deltas[i][0], curr_size))
 
-    # Count cycles: peak → trough → peak with sufficient amplitude
+    # Count full cycles: peak → trough → peak, where both the drop and the
+    # rebound clear min_amplitude. A peak → trough drop with no rebound is a
+    # deliberate prune-down, not an oscillation.
     cycles = 0
     cycle_starts = []
-    peak_idx = 0
-    trough_idx = 0
-
-    while peak_idx < len(peaks) and trough_idx < len(troughs):
-        peak = peaks[peak_idx]
-        # Find next trough after this peak
-        while trough_idx < len(troughs) and troughs[trough_idx][0] < peak[0]:
-            trough_idx += 1
-        if trough_idx >= len(troughs):
-            break
-        trough = troughs[trough_idx]
-
-        # Check amplitude
-        amplitude = peak[1] - trough[1]
-        if amplitude >= min_amplitude:
-            cycles += 1
-            cycle_starts.append(peak[0])
-
-        peak_idx += 1
+    for i in range(len(extrema) - 2):
+        first, second, third = extrema[i], extrema[i + 1], extrema[i + 2]
+        if first[0] == "peak" and second[0] == "trough" and third[0] == "peak":
+            drop = first[2] - second[2]
+            rebound = third[2] - second[2]
+            if drop >= min_amplitude and rebound >= min_amplitude:
+                cycles += 1
+                cycle_starts.append(first[1])
 
     # Average cycle period
     avg_period = None
@@ -85,7 +75,13 @@ def detect_oscillation(
 
 
 def detect_re_retrievals(events: list[StoredEvent]) -> list[ReRetrievalRecord]:
-    """Detect content that was retrieved, pruned, then retrieved again."""
+    """Detect content that was retrieved, pruned, then retrieved again.
+
+    Only the retrieve → prune → retrieve ordering counts; retrieving twice
+    and then pruning is normal usage. Wasted tokens are the tokens of
+    retrievals that happen *after* a prune of the same source — the first
+    retrieval was legitimate.
+    """
     # Track sources: source → list of (event_type, sequence, tokens)
     source_history: dict[str, list[tuple[EventType, int, int]]] = {}
 
@@ -103,30 +99,40 @@ def detect_re_retrievals(events: list[StoredEvent]) -> list[ReRetrievalRecord]:
             if not target:
                 continue
             tokens = ev.data.get("tokens_removed", 0)
-            # Check if this prune target matches any known retrieval source
+            # A broad prune target ("all retrieved docs") can cover several
+            # sources — attach it to every match, not just the first.
             for key in source_history:
                 if key in target or target in key:
                     source_history[key].append(
                         (EventType.PRUNING, ev.sequence, tokens)
                     )
-                    break
 
-    # Find sources with retrieve → prune → retrieve pattern
+    # Find sources with a retrieve → prune → retrieve pattern
     results = []
     for source, history in source_history.items():
+        history.sort(key=lambda item: item[1])
         retrieval_count = sum(1 for t, _, _ in history if t == EventType.RETRIEVAL)
         prune_count = sum(1 for t, _, _ in history if t == EventType.PRUNING)
 
-        if retrieval_count >= 2 and prune_count >= 1:
-            # This is a re-retrieval
-            total_tokens = sum(tokens for t, _, tokens in history if t == EventType.RETRIEVAL)
+        # Sum tokens of retrievals that follow a prune of this source
+        wasted_tokens = 0
+        re_retrievals_seen = 0
+        pruned = False
+        for event_type, _, tokens in history:
+            if event_type == EventType.PRUNING:
+                pruned = True
+            elif event_type == EventType.RETRIEVAL and pruned:
+                wasted_tokens += tokens
+                re_retrievals_seen += 1
+
+        if re_retrievals_seen >= 1:
             sequences = [seq for _, seq, _ in history]
             results.append(
                 ReRetrievalRecord(
                     source=source,
                     times_retrieved=retrieval_count,
                     times_pruned=prune_count,
-                    total_wasted_tokens=total_tokens,
+                    total_wasted_tokens=wasted_tokens,
                     first_seen_seq=min(sequences),
                     last_seen_seq=max(sequences),
                 )
